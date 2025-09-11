@@ -2,14 +2,14 @@ import requests
 import yaml
 import asyncio
 import logging
+import signal
 import urllib3
-from datetime import datetime
 from quart import Quart, request, jsonify
 
 # --- Suppress SSL warnings ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- Load config.yaml ---
+# --- Load config ---
 with open("config.yaml") as f:
     config = yaml.safe_load(f)
 
@@ -17,13 +17,12 @@ API_URL = "https://api.topstepx.com"
 USERNAME = config["username"]
 API_KEY = config["api_key"]
 ACCOUNT_ID = int(config["account_id"])
-CONTRACT_ID = "CON.F.US.MYM.U25"
 
 app = Quart(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# --- In-memory OCO tracking ---
 oco_orders = {}  # entry_id: [tp_id, sl_id]
+contract_map = {}  # "MYM" → full contract metadata dict
 
 # --- Auth ---
 def get_token():
@@ -57,202 +56,225 @@ def api_post(token, endpoint, payload):
         logging.error(f"API error on {endpoint}: {e}")
         return {}
 
-# --- API DELETE for cancellation ---
+# --- Cancel Order ---
 def cancel_order(token, account_id, order_id):
     try:
         res = requests.post(
-            f"https://api.topstepx.com/api/Order/cancel",
+            f"{API_URL}/api/Order/cancel",
             json={"accountId": account_id, "orderId": order_id},
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             verify=False
         )
         res.raise_for_status()
-        data = res.json()
-        if data.get("success"):
-            return True
-        logging.error(f"Cancel failed: {data.get('errorMessage')}")
-        return False
+        return res.json().get("success", False)
     except Exception as e:
         logging.error(f"Cancel failed for {order_id}: {e}")
         return False
 
+# --- Load Contracts ---
+def load_contracts():
+    token = get_token()
+    if not token:
+        logging.error("Contract preload failed: auth error")
+        return
+
+    try:
+        res = requests.get(
+            "https://userapi.topstepx.com/UserContract/active/nonprofesional",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0",
+                "x-app-type": "px-desktop",
+                "x-app-version": "1.21.1"
+            },
+            verify=False
+        )
+        res.raise_for_status()
+        contracts = res.json()
+        if not isinstance(contracts, list):
+            logging.warning("Unexpected contract format.")
+            return
+
+        for c in contracts:
+            if c.get("disabled"):
+                continue
+            product_id = c.get("productId")
+            if not product_id or not c.get("contractId"):
+                continue
+            parts = product_id.split(".")
+            if len(parts) >= 3:
+                short_symbol = parts[-1]
+                contract_map[short_symbol] = {
+                    "contractId": c["contractId"],
+                    "tickValue": c["tickValue"],
+                    "tickSize": c["tickSize"],
+                    "pointValue": c["pointValue"],
+                    "exchangeFee": c["exchangeFee"],
+                    "regulatoryFee": c["regulatoryFee"],
+                    "totalFees": c["totalFees"],
+                    "decimalPlaces": c["decimalPlaces"],
+                    "priceScale": c["priceScale"]
+                }
+
+        logging.info(f"Loaded {len(contract_map)} contracts")
+        print("\n--- Contract Map ---")
+        for k, v in contract_map.items():
+            print(f"{k}: {v['contractId']}")
+
+    except Exception as e:
+        logging.error(f"UserContract load error: {e}")
+
 # --- Monitor OCO Orders ---
 async def monitor_oco_orders():
     while True:
+        if not oco_orders:
+            await asyncio.sleep(0.3)
+            continue
+
         token = get_token()
         if not token:
-            logging.warning("Monitoring skipped: auth failed.")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.3)
             continue
 
-        try:
-            response = api_post(token, "/api/Order/searchOpen", {
-                "accountId": ACCOUNT_ID
-            })
-            orders = response.get("orders", [])
-        except Exception as e:
-            logging.error(f"Order searchOpen failed: {e}")
-            await asyncio.sleep(1)
-            continue
-
+        response = api_post(token, "/api/Order/searchOpen", {"accountId": ACCOUNT_ID})
+        orders = response.get("orders", [])
         active_ids = {o["id"] for o in orders if "id" in o}
 
         for entry_id, linked_ids in list(oco_orders.items()):
+            if not entry_id or not all(linked_ids):
+                continue
+
             all_ids = [entry_id] + linked_ids
             missing = [oid for oid in all_ids if oid not in active_ids]
 
-            logging.info(f"OCO Group: Entry={entry_id}, Linked={linked_ids}")
+            if not missing:
+                continue
+
             for oid in all_ids:
-                status = "Active" if oid in active_ids else "Not Found"
-                logging.info(f"Order {oid} → Status: {status}")
+                if oid in active_ids and cancel_order(token, ACCOUNT_ID, oid):
+                    logging.info(f"Canceled order {oid}")
+            del oco_orders[entry_id]
 
-            if missing:
-                logging.warning(f"OCO cancel triggered: missing = {missing}")
-                for oid in all_ids:
-                    if oid in active_ids:
-                        if cancel_order(token, ACCOUNT_ID, oid):
-                            logging.info(f"Canceled order {oid}")
-                del oco_orders[entry_id]
+        await asyncio.sleep(0.3)
 
-        await asyncio.sleep(1)
+# --- Place OCO ---
+async def place_oco_generic(data, entry_type):
+    quantity = int(data.get("quantity", 1))
+    op = data.get("op")
+    tp = data.get("tp")
+    sl = data.get("sl")
+    symbol = data.get("symbol", "").upper()
+    contract = contract_map.get(symbol)
+    if not contract:
+        return jsonify({"error": f"Unknown symbol: {symbol}"}), 400
 
-# --- Place Limit OCO ---
+    contract_id = contract["contractId"]
+    side = 0 if quantity > 0 else 1
+    size = abs(quantity)
+    token = get_token()
+    if not token:
+        return jsonify({"error": "Authentication failed"}), 500
+
+    entry = api_post(token, "/api/Order/place", {
+        "accountId": ACCOUNT_ID,
+        "contractId": contract_id,
+        "type": entry_type,
+        "side": side,
+        "size": size,
+        "limitPrice": op if entry_type == 1 else None,
+        "stopPrice": op if entry_type == 4 else None
+    })
+    entry_id = entry.get("orderId")
+    if not entry.get("success") or not entry_id:
+        return jsonify({"error": "Entry order failed"}), 500
+    await asyncio.sleep(0.3)
+    tp_order = api_post(token, "/api/Order/place", {
+        "accountId": ACCOUNT_ID,
+        "contractId": contract_id,
+        "type": 1,
+        "side": 1 - side,
+        "size": size,
+        "limitPrice": tp,
+        "linkedOrderId": entry_id
+    })
+    await asyncio.sleep(0.3)
+    sl_order = api_post(token, "/api/Order/place", {
+        "accountId": ACCOUNT_ID,
+        "contractId": contract_id,
+        "type": 4,
+        "side": 1 - side,
+        "size": size,
+        "stopPrice": sl,
+        "linkedOrderId": entry_id
+    })
+    print(sl_order)
+
+    oco_orders[entry_id] = [tp_order.get("orderId"), sl_order.get("orderId")]
+
+    return jsonify({
+        "entryOrderId": entry_id,
+        "takeProfitOrderId": tp_order.get("orderId"),
+        "stopLossOrderId": sl_order.get("orderId"),
+        "contractId": contract_id,
+        "tickSize": contract["tickSize"],
+        "tickValue": contract["tickValue"],
+        "message": "OCO placed"
+    })
+
 @app.route("/place-oco", methods=["POST"])
 async def place_oco():
     data = await request.get_json()
-    quantity = int(data.get("quantity", 1))
-    op = data.get("op")
-    tp = data.get("tp")
-    sl = data.get("sl")
+    return await place_oco_generic(data, entry_type=1)
 
-    if not op or not tp or not sl:
-        return jsonify({"error": "Missing op, tp, or sl"}), 400
-
-    side = 0 if quantity > 0 else 1
-    size = abs(quantity)
-    token = get_token()
-    if not token:
-        return jsonify({"error": "Authentication failed"}), 500
-
-    try:
-        entry = api_post(token, "/api/Order/place", {
-            "accountId": ACCOUNT_ID,
-            "contractId": CONTRACT_ID,
-            "type": 1,
-            "side": side,
-            "size": size,
-            "limitPrice": op
-        })
-        entry_id = entry.get("orderId")
-        if not entry.get("success") or not entry_id:
-            return jsonify({"error": "Entry order failed"}), 500
-
-        tp_order = api_post(token, "/api/Order/place", {
-            "accountId": ACCOUNT_ID,
-            "contractId": CONTRACT_ID,
-            "type": 1,
-            "side": 1 - side,
-            "size": size,
-            "limitPrice": tp,
-            "linkedOrderId": entry_id
-        })
-
-        sl_order = api_post(token, "/api/Order/place", {
-            "accountId": ACCOUNT_ID,
-            "contractId": CONTRACT_ID,
-            "type": 4,
-            "side": 1 - side,
-            "size": size,
-            "stopPrice": sl,
-            "linkedOrderId": entry_id
-        })
-
-        oco_orders[entry_id] = [tp_order.get("orderId"), sl_order.get("orderId")]
-
-        logging.info(f"Placed entry order: {entry_id}")
-        logging.info(f"Placed TP order: {tp_order.get('orderId')}")
-        logging.info(f"Placed SL order: {sl_order.get('orderId')}")
-
-        return jsonify({
-            "entryOrderId": entry_id,
-            "takeProfitOrderId": tp_order.get("orderId"),
-            "stopLossOrderId": sl_order.get("orderId"),
-            "message": "Limit OCO placed"
-        })
-    except Exception:
-        return jsonify({"error": "OCO placement failed"}), 500
-
-# --- Place Stop-Market OCO ---
 @app.route("/place-oco-stop", methods=["POST"])
 async def place_oco_stop():
     data = await request.get_json()
-    quantity = int(data.get("quantity", 1))
-    op = data.get("op")
-    tp = data.get("tp")
-    sl = data.get("sl")
+    return await place_oco_generic(data, entry_type=4)
 
-    if not op or not tp or not sl:
-        return jsonify({"error": "Missing op, tp, or sl"}), 400
-
-    side = 0 if quantity > 0 else 1
-    size = abs(quantity)
+@app.route("/balance", methods=["GET"])
+async def balance():
     token = get_token()
     if not token:
         return jsonify({"error": "Authentication failed"}), 500
 
     try:
-        entry = api_post(token, "/api/Order/place", {
-            "accountId": ACCOUNT_ID,
-            "contractId": CONTRACT_ID,
-            "type": 4,
-            "side": side,
-            "size": size,
-            "stopPrice": op
-        })
-        entry_id = entry.get("orderId")
-        if not entry.get("success") or not entry_id:
-            return jsonify({"error": "Entry stop order failed"}), 500
+        res = requests.get(
+            "https://userapi.topstepx.com/TradingAccount",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0",
+                "x-app-type": "px-desktop",
+                "x-app-version": "1.21.1"
+            },
+            verify=False
+        )
+        res.raise_for_status()
+        accounts = res.json()
+        if not isinstance(accounts, list) or not accounts:
+            return jsonify({"error": "No account found"}), 404
 
-        tp_order = api_post(token, "/api/Order/place", {
-            "accountId": ACCOUNT_ID,
-            "contractId": CONTRACT_ID,
-            "type": 1,
-            "side": 1 - side,
-            "size": size,
-            "limitPrice": tp,
-            "linkedOrderId": entry_id
-        })
+        balance = accounts[0].get("balance")
+        if balance is None:
+            return jsonify({"error": "Balance not available"}), 404
 
-        sl_order = api_post(token, "/api/Order/place", {
-            "accountId": ACCOUNT_ID,
-            "contractId": CONTRACT_ID,
-            "type": 4,
-            "side": 1 - side,
-            "size": size,
-            "stopPrice": sl,
-            "linkedOrderId": entry_id
-        })
+        return jsonify({"balance": balance})
 
-        oco_orders[entry_id] = [tp_order.get("orderId"), sl_order.get("orderId")]
+    except Exception as e:
+        logging.error(f"Balance fetch error: {e}")
+        return jsonify({"error": "Failed to fetch balance"}), 500
 
-        logging.info(f"Placed entry order: {entry_id}")
-        logging.info(f"Placed TP order: {tp_order.get('orderId')}")
-        logging.info(f"Placed SL order: {sl_order.get('orderId')}")
-
-        return jsonify({
-            "entryOrderId": entry_id,
-            "takeProfitOrderId": tp_order.get("orderId"),
-            "stopLossOrderId": sl_order.get("orderId"),
-            "message": "Stop-market OCO placed"
-        })
-    except Exception:
-        return jsonify({"error": "OCO stop placement failed"}), 500
-
-# --- Startup Hook ---
 @app.before_serving
 async def startup():
+    load_contracts()
     asyncio.create_task(monitor_oco_orders())
 
-# --- Run ---
-if __name__ == "__main__":
+def run_server():
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, loop.stop)
     app.run(port=5000)
+
+if __name__ == "__main__":
+    run_server()
