@@ -165,6 +165,7 @@ async def place_oco_generic(data, entry_type):
     tp = data.get("tp")
     sl = data.get("sl")
     symbol = data.get("symbol", "").upper()
+    custom_tag = data.get("customTag")
     contract = contract_map.get(symbol)
     if not contract:
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 400
@@ -183,7 +184,8 @@ async def place_oco_generic(data, entry_type):
         "side": side,
         "size": size,
         "limitPrice": op if entry_type == 1 else None,
-        "stopPrice": op if entry_type == 4 else None
+        "stopPrice": op if entry_type == 4 else None,
+        "custom_tag": custom_tag
     })
     entry_id = entry.get("orderId")
     if not entry.get("success") or not entry_id:
@@ -196,7 +198,8 @@ async def place_oco_generic(data, entry_type):
         "side": 1 - side,
         "size": size,
         "limitPrice": tp,
-        "linkedOrderId": entry_id
+        "linkedOrderId": entry_id,
+        "customTag": f"{custom_tag}-TP" if custom_tag else None
     })
     await asyncio.sleep(0.3)
     sl_order = api_post(token, "/api/Order/place", {
@@ -206,7 +209,8 @@ async def place_oco_generic(data, entry_type):
         "side": 1 - side,
         "size": size,
         "stopPrice": sl,
-        "linkedOrderId": entry_id
+        "linkedOrderId": entry_id,
+        "customTag": f"{custom_tag}-SL" if custom_tag else None
     })
     print(sl_order)
 
