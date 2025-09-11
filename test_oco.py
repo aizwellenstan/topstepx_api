@@ -11,7 +11,7 @@ sl = 45400.0           # Stop loss
 # --- Limit Entry OCO ---
 limit_payload = {
     "quantity": quantity,
-    "op": 39500.0,      # Limit entry price
+    "op": 45500.0,      # Limit entry price
     "tp": tp,
     "sl": sl
 }
@@ -34,5 +34,5 @@ def send_request(endpoint, payload, label):
         print(f"{label} failed:", e)
 
 # --- Run both ---
-# send_request("/place-oco", limit_payload, "Limit Entry OCO")
-send_request("/place-oco-stop", stop_payload, "Stop-Market Entry OCO")
+send_request("/place-oco", limit_payload, "Limit Entry OCO")
+# send_request("/place-oco-stop", stop_payload, "Stop-Market Entry OCO")
