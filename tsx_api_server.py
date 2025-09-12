@@ -145,16 +145,24 @@ async def monitor_oco_orders():
             if not entry_id or not all(linked_ids):
                 continue
 
-            all_ids = [entry_id] + linked_ids
-            missing = [oid for oid in all_ids if oid not in active_ids]
+            tp_id, sl_id = linked_ids
+            tp_missing = tp_id not in active_ids
+            sl_missing = sl_id not in active_ids
 
-            if not missing:
-                continue
+            # If either SL or TP is triggered, cancel the other
+            if tp_missing or sl_missing:
+                remaining_id = sl_id if tp_missing else tp_id
+                if remaining_id in active_ids:
+                    success = cancel_order(token, ACCOUNT_ID, remaining_id)
+                    if success:
+                        logging.info(f"Canceled remaining OCO leg: {remaining_id}")
+                    else:
+                        logging.warning(f"Failed to cancel remaining leg: {remaining_id}")
+                else:
+                    logging.info(f"Remaining leg already inactive: {remaining_id}")
 
-            for oid in all_ids:
-                if oid in active_ids and cancel_order(token, ACCOUNT_ID, oid):
-                    logging.info(f"Canceled order {oid}")
-            del oco_orders[entry_id]
+                # Remove the OCO group from tracking
+                del oco_orders[entry_id]
 
         await asyncio.sleep(0.3)
 
@@ -184,8 +192,7 @@ async def place_oco_generic(data, entry_type):
         "side": side,
         "size": size,
         "limitPrice": op if entry_type == 1 else None,
-        "stopPrice": op if entry_type == 4 else None,
-        "custom_tag": custom_tag
+        "stopPrice": op if entry_type == 4 else None
     })
     entry_id = entry.get("orderId")
     if not entry.get("success") or not entry_id:
@@ -198,8 +205,7 @@ async def place_oco_generic(data, entry_type):
         "side": 1 - side,
         "size": size,
         "limitPrice": tp,
-        "linkedOrderId": entry_id,
-        "customTag": f"{custom_tag}-TP" if custom_tag else None
+        "linkedOrderId": entry_id
     })
     await asyncio.sleep(0.3)
     sl_order = api_post(token, "/api/Order/place", {
@@ -209,8 +215,7 @@ async def place_oco_generic(data, entry_type):
         "side": 1 - side,
         "size": size,
         "stopPrice": sl,
-        "linkedOrderId": entry_id,
-        "customTag": f"{custom_tag}-SL" if custom_tag else None
+        "linkedOrderId": entry_id
     })
     print(sl_order)
 

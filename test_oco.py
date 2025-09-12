@@ -6,7 +6,7 @@ symbol = "YM"
 limit_payload = {
     "quantity": 1,
     "op": 45500.0,
-    "tp": 45900.0,
+    "tp": 46200.0,
     "sl": 45300.0,
     "symbol": symbol,
     "customTag": "TEST"
