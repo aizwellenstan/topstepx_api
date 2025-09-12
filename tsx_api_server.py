@@ -2,7 +2,6 @@ import requests
 import yaml
 import asyncio
 import logging
-import signal
 import urllib3
 from quart import Quart, request, jsonify
 
@@ -280,9 +279,6 @@ async def startup():
     asyncio.create_task(monitor_oco_orders())
 
 def run_server():
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, loop.stop)
     app.run(port=5000)
 
 if __name__ == "__main__":
