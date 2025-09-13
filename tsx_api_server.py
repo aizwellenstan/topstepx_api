@@ -165,6 +165,30 @@ async def monitor_oco_orders():
 
         await asyncio.sleep(0.3)
 
+def get_account_info(token):
+    try:
+        res = requests.get(
+            "https://userapi.topstepx.com/TradingAccount",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0",
+                "x-app-type": "px-desktop",
+                "x-app-version": "1.21.1"
+            },
+            verify=False
+        )
+        res.raise_for_status()
+        accounts = res.json()
+        if not isinstance(accounts, list) or not accounts:
+            logging.warning("No account data found.")
+            return None
+
+        return accounts[0]  # Return the first account
+    except Exception as e:
+        logging.error(f"Account info fetch error: {e}")
+        return None
+
 # --- Place OCO ---
 async def place_oco_generic(data, entry_type):
     quantity = int(data.get("quantity", 1))
@@ -173,17 +197,67 @@ async def place_oco_generic(data, entry_type):
     sl = data.get("sl")
     symbol = data.get("symbol", "").upper()
     custom_tag = data.get("customTag")
+
     contract = contract_map.get(symbol)
     if not contract:
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 400
 
+    tick_size = contract["tickSize"]
+    tick_value = contract["tickValue"]
     contract_id = contract["contractId"]
-    side = 0 if quantity > 0 else 1
-    size = abs(quantity)
+
     token = get_token()
     if not token:
         return jsonify({"error": "Authentication failed"}), 500
 
+    account_info = get_account_info(token)
+    if not account_info:
+        return jsonify({"error": "Failed to fetch account data"}), 500
+
+    balance = account_info.get("balance")
+    maximum_loss = account_info.get("maximumLoss")
+    if balance is None or maximum_loss is None:
+        return jsonify({"error": "Missing account data"}), 500
+
+    sl_ticks = abs(op - sl) / tick_size
+    if sl_ticks == 0:
+        return jsonify({"error": "SL too close to OP"}), 400
+
+    risk_budget = (balance - maximum_loss) * 0.24
+    quantity = int(risk_budget / (sl_ticks * tick_value))
+    print(risk_budget)
+    if quantity <= 0:
+        return jsonify({"error": "Calculated quantity is zero"}), 400
+
+    # Micro to standard override
+    micro_to_standard = {
+        "MNQ": "NQ",
+        "MYM": "YM",
+        "MGC": "GC",
+        "MES": "ES"
+    }
+
+    if quantity >= 10 and symbol in micro_to_standard:
+        symbol = micro_to_standard[symbol]
+        contract = contract_map.get(symbol)
+        if not contract:
+            return jsonify({"error": f"Standard symbol not found: {symbol}"}), 400
+        contract_id = contract["contractId"]
+        tick_size = contract["tickSize"]
+        tick_value = contract["tickValue"]
+        quantity = int(risk_budget / (sl_ticks * tick_value))
+
+    side = 0 if op < tp else 1
+    size = abs(quantity)
+    # return jsonify({
+    #     "contract": contract_id,
+    #     "side": side,
+    #     "size": size,
+    #     "balance": balance,
+    #     "maximum_loss": maximum_loss,
+    #     "risk_budget": risk_budget,
+    #     "message": "OCO placed"
+    # })
     entry = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
         "contractId": contract_id,
@@ -246,32 +320,17 @@ async def balance():
     if not token:
         return jsonify({"error": "Authentication failed"}), 500
 
-    try:
-        res = requests.get(
-            "https://userapi.topstepx.com/TradingAccount",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0",
-                "x-app-type": "px-desktop",
-                "x-app-version": "1.21.1"
-            },
-            verify=False
-        )
-        res.raise_for_status()
-        accounts = res.json()
-        if not isinstance(accounts, list) or not accounts:
-            return jsonify({"error": "No account found"}), 404
+    account_info = get_account_info(token)
+    if not account_info:
+        return jsonify({"error": "Failed to fetch account data"}), 500
 
-        balance = accounts[0].get("balance")
-        if balance is None:
-            return jsonify({"error": "Balance not available"}), 404
+    balance = account_info.get("balance")
+    maximum_loss = account_info.get("maximumLoss")
 
-        return jsonify({"balance": balance})
-
-    except Exception as e:
-        logging.error(f"Balance fetch error: {e}")
-        return jsonify({"error": "Failed to fetch balance"}), 500
+    return jsonify({
+        "balance": balance,
+        "maximumLoss": maximum_loss
+    })
 
 @app.before_serving
 async def startup():

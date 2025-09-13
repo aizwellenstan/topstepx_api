@@ -1,13 +1,13 @@
 import requests
 
 BASE_URL = "http://127.0.0.1:5000"
-symbol = "YM"
+symbol = "MNQ"
 
 limit_payload = {
     "quantity": 1,
-    "op": 45500.0,
-    "tp": 46200.0,
-    "sl": 45300.0,
+    "op": 24058.75,
+    "tp": 24095.75,
+    "sl": 23987,
     "symbol": symbol,
     "customTag": "TEST"
 }
