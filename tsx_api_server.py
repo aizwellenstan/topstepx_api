@@ -247,6 +247,8 @@ async def place_oco_generic(data, entry_type):
         tick_value = contract["tickValue"]
         quantity = int(risk_budget / (sl_ticks * tick_value))
 
+    if quantity >= 3: quantity = 3 #Maxium 3 contracts
+
     side = 0 if op < tp else 1
     size = abs(quantity)
     # return jsonify({
