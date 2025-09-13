@@ -303,6 +303,9 @@ async def place_oco_generic(data, entry_type):
         "contractId": contract_id,
         "tickSize": contract["tickSize"],
         "tickValue": contract["tickValue"],
+        "balance": balance,
+        "maximum_loss": maximum_loss,
+        "risk_budget": risk_budget,
         "message": "OCO placed"
     })
 
