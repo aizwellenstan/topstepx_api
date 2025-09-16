@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>OCO Order Placement</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f0f2f5;
+        }
+
+        h2 {
+            color: #333;
+            margin-top: 40px;
+            margin-bottom: 20px;
+        }
+
+        form {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: #fff;
+            border: 1px solid #ccc;
+            max-width: 500px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        input,
+        button {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+        }
+
+        .symbol-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 15px;
+        }
+
+        .symbol-button {
+            padding: 6px 12px;
+            font-size: 14px;
+            background-color: #eee;
+            border: 1px solid #ccc;
+            cursor: pointer;
+            border-radius: 3px;
+            text-align: center;
+            width: auto;
+        }
+
+        .symbol-button.selected {
+            background-color: #0078d4;
+            color: white;
+            border-color: #005fa3;
+        }
+
+        .action-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .action-button {
+            padding: 10px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            flex: 1;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .action-button.buy {
+            background-color: #28a745;
+        }
+
+        .action-button.sell {
+            background-color: #dc3545;
+        }
+
+        /* MOST OBVIOUS SELECTED STYLE */
+        .action-button.selected {
+            font-weight: 700;
+            transform: scale(1.1);
+            transition: all 0.2s ease;
+            position: relative;
+            z-index: 10;
+            color: #fff;
+            border: 3px solid transparent; /* fallback border */
+        }
+
+        .action-button.selected.buy {
+            background: linear-gradient(45deg, #34d058, #28a745);
+            border-color: #218838;
+            box-shadow: 0 0 12px 4px rgba(40, 167, 69, 0.75);
+        }
+
+        .action-button.selected.sell {
+            background: linear-gradient(45deg, #e55353, #dc3545);
+            border-color: #a71d2a;
+            box-shadow: 0 0 12px 4px rgba(220, 53, 69, 0.75);
+        }
+
+        button[type="submit"] {
+            background-color: #0078d4;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button[type="submit"]:hover {
+            background-color: #005fa3;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Place OCO Order</h2>
+    <form id="ocoForm">
+        <label>Select Symbol:</label>
+        <div class="symbol-container" id="ocoSymbols"></div>
+        <input type="hidden" name="symbol" id="ocoSymbolInput" required />
+
+        <div class="action-container">
+            <button type="button" class="action-button buy" data-value="1">Buy</button>
+            <button type="button" class="action-button sell" data-value="-1">Sell</button>
+        </div>
+        <input type="hidden" name="quantity" id="ocoQuantityInput" required />
+
+        <label>Entry Price (OP):</label>
+        <input type="number" name="op" step="0.01" required />
+
+        <label>Take Profit (TP):</label>
+        <input type="number" name="tp" step="0.01" required />
+
+        <label>Stop Loss (SL):</label>
+        <input type="number" name="sl" step="0.01" required />
+
+        <button type="submit">Place OCO</button>
+    </form>
+
+    <h2>Place OCO Stop Order</h2>
+    <form id="ocoStopForm">
+        <label>Select Symbol:</label>
+        <div class="symbol-container" id="ocoStopSymbols"></div>
+        <input type="hidden" name="symbol" id="ocoStopSymbolInput" required />
+
+        <div class="action-container">
+            <button type="button" class="action-button buy" data-value="1">Buy</button>
+            <button type="button" class="action-button sell" data-value="-1">Sell</button>
+        </div>
+        <input type="hidden" name="quantity" id="ocoStopQuantityInput" required />
+
+        <label>Stop Entry Price (OP):</label>
+        <input type="number" name="op" step="0.01" required />
+
+        <label>Take Profit (TP):</label>
+        <input type="number" name="tp" step="0.01" required />
+
+        <label>Stop Loss (SL):</label>
+        <input type="number" name="sl" step="0.01" required />
+
+        <button type="submit">Place OCO Stop</button>
+    </form>
+
+    <script>
+        const symbols = ["YM", "MYM", "NQ", "MNQ", "GC", "MGC", "ES", "MES"];
+
+        function createSymbolButtons(containerId, inputId) {
+            const container = document.getElementById(containerId);
+            const input = document.getElementById(inputId);
+
+            symbols.forEach(symbol => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "symbol-button";
+                btn.textContent = symbol;
+
+                btn.onclick = () => {
+                    input.value = symbol;
+                    container.querySelectorAll(".symbol-button").forEach(b => b.classList.remove("selected"));
+                    btn.classList.add("selected");
+                };
+
+                container.appendChild(btn);
+            });
+        }
+
+        function setupActionButtons(formId, inputId) {
+            const form = document.getElementById(formId);
+            const buttons = form.querySelectorAll(".action-button");
+            const input = form.querySelector(`#${inputId}`);
+
+            // Select "Buy" by default with obvious style
+            const buyBtn = form.querySelector(".action-button.buy");
+            if (buyBtn) {
+                buyBtn.classList.add("selected");
+                input.value = buyBtn.dataset.value;  // Set hidden input to 1 (Buy)
+            }
+
+            buttons.forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const value = btn.dataset.value;
+                    input.value = value;
+
+                    // Highlight selected
+                    buttons.forEach(b => b.classList.remove("selected"));
+                    btn.classList.add("selected");
+                });
+            });
+        }
+
+        async function handleFormSubmit(formId, endpoint) {
+            const form = document.getElementById(formId);
+
+            form.addEventListener("submit", async function (e) {
+                e.preventDefault();
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData.entries());
+
+                // Convert numeric fields to numbers
+                ["op", "tp", "sl", "quantity"].forEach(key => {
+                    if (data[key] !== undefined) {
+                        data[key] = parseFloat(data[key]);
+                    }
+                });
+
+                if (!data.symbol || !data.quantity) {
+                    alert("Please select a symbol and side.");
+                    return;
+                }
+
+                try {
+                    const response = await fetch(endpoint, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(data)
+                    });
+
+                    const result = await response.json();
+                    alert("Response:\n" + JSON.stringify(result, null, 2));
+                } catch (err) {
+                    console.error("Submission error:", err);
+                    alert("Failed to submit order. Please check your inputs and try again.");
+                }
+            });
+        }
+
+        createSymbolButtons("ocoSymbols", "ocoSymbolInput");
+        createSymbolButtons("ocoStopSymbols", "ocoStopSymbolInput");
+
+        setupActionButtons("ocoForm", "ocoQuantityInput");
+        setupActionButtons("ocoStopForm", "ocoStopQuantityInput");
+
+        handleFormSubmit("ocoForm", "/place-oco");
+        handleFormSubmit("ocoStopForm", "/place-oco-stop");
+    </script>
+
+</body>
+</html>

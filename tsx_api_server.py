@@ -3,7 +3,8 @@ import yaml
 import asyncio
 import logging
 import urllib3
-from quart import Quart, request, jsonify
+# from quart import Quart, request, jsonify
+from quart import Quart, render_template, request, jsonify
 from modules.discord import Alert
 import json
 
@@ -26,7 +27,37 @@ oco_orders = {}  # entry_id: [tp_id, sl_id]
 contract_map = {}  # "MYM" → full contract metadata dict
 
 # --- Auth ---
-def get_token():
+# def get_token():
+#     try:
+#         res = requests.post(
+#             f"{API_URL}/api/Auth/loginKey",
+#             json={"userName": USERNAME, "apiKey": API_KEY},
+#             headers={"Content-Type": "application/json"},
+#             timeout=10,
+#             verify=False
+#         )
+#         res.raise_for_status()
+#         data = res.json()
+#         return data.get("token") if data.get("success") else None
+#     except Exception as e:
+#         logging.error(f"Auth error: {e}")
+#         return None
+TOKEN = None
+def get_token(force_refresh=False):
+    """
+    Return a valid token. 
+    If existing token fails account-info test, fetch a new one.
+    """
+    global TOKEN
+    if TOKEN and not force_refresh:
+        # test token by calling account info
+        if _test_token(TOKEN):
+            return TOKEN
+        else:
+            logging.info("Stored token invalid, refreshing...")
+            TOKEN = None  # reset
+
+    # request new token
     try:
         res = requests.post(
             f"{API_URL}/api/Auth/loginKey",
@@ -37,10 +68,33 @@ def get_token():
         )
         res.raise_for_status()
         data = res.json()
-        return data.get("token") if data.get("success") else None
+        TOKEN = data.get("token") if data.get("success") else None
+        return TOKEN
     except Exception as e:
         logging.error(f"Auth error: {e}")
         return None
+
+
+def _test_token(token):
+    """Try account info with given token. Return True if valid."""
+    try:
+        res = requests.get(
+            "https://userapi.topstepx.com/TradingAccount",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0",
+                "x-app-type": "px-desktop",
+                "x-app-version": "1.21.1"
+            },
+            timeout=10,
+            verify=False
+        )
+        if res.status_code == 200:
+            return True
+        return False
+    except Exception:
+        return False
 
 # --- API POST ---
 def api_post(token, endpoint, payload):
@@ -327,6 +381,16 @@ async def place_oco_generic(data, entry_type):
         "message": "OCO placed"
     })
 
+@app.route("/")
+async def index():
+    priority = ["YM", "MYM", "NQ", "MNQ", "GC", "MGC", "ES", "MES"]
+    all_symbols = list(contract_map.keys())
+
+    # Put priority symbols first, then the rest (excluding duplicates)
+    sorted_symbols = priority + [s for s in all_symbols if s not in priority]
+
+    return await render_template("order_form.html", symbols=sorted_symbols)
+
 @app.route("/place-oco", methods=["POST"])
 async def place_oco():
     data = await request.get_json()
@@ -361,7 +425,7 @@ async def startup():
     asyncio.create_task(monitor_oco_orders())
 
 def run_server():
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
     run_server()

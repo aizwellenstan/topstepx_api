@@ -1,3 +1,4 @@
 quart
 requests
 pyyaml
+quart_cors
