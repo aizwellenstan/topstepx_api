@@ -4,6 +4,8 @@ import asyncio
 import logging
 import urllib3
 from quart import Quart, request, jsonify
+from modules.discord import Alert
+import json
 
 # --- Suppress SSL warnings ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -199,6 +201,7 @@ async def place_oco_generic(data, entry_type):
     custom_tag = data.get("customTag")
 
     contract = contract_map.get(symbol)
+    print(symbol)
     if not contract:
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 400
 
@@ -251,6 +254,20 @@ async def place_oco_generic(data, entry_type):
 
     side = 0 if op < tp else 1
     size = abs(quantity)
+    message = {
+        "contract": contract_id,
+        "side": side,
+        "size": size,
+        "op": op,
+        "sl": sl,
+        "tp": tp,
+        "balance": balance,
+        "maximum_loss": maximum_loss,
+        "risk_budget": risk_budget,
+        "message": "OCO placed"
+    }
+    print(message)
+    Alert(json.dumps(message))
     # return jsonify({
     #     "contract": contract_id,
     #     "side": side,
@@ -269,6 +286,7 @@ async def place_oco_generic(data, entry_type):
         "limitPrice": op if entry_type == 1 else None,
         "stopPrice": op if entry_type == 4 else None
     })
+    print(entry)
     entry_id = entry.get("orderId")
     if not entry.get("success") or not entry_id:
         return jsonify({"error": "Entry order failed"}), 500
