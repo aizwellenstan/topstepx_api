@@ -31,6 +31,7 @@ account_response = requests.post(
 
 accounts = account_response.get("accounts", [])
 if accounts:
+    print(accounts)
     print(f"First active account ID: {accounts[0]['id']}")
 else:
     print("No active accounts found.")

@@ -132,10 +132,10 @@
         <div class="symbol-container" id="ocoSymbols"></div>
         <input type="hidden" name="symbol" id="ocoSymbolInput" required />
 
-        <div class="action-container">
+        <!-- <div class="action-container">
             <button type="button" class="action-button buy" data-value="1">Buy</button>
             <button type="button" class="action-button sell" data-value="-1">Sell</button>
-        </div>
+        </div> -->
         <input type="hidden" name="quantity" id="ocoQuantityInput" required />
 
         <label>Entry Price (OP):</label>
@@ -156,10 +156,10 @@
         <div class="symbol-container" id="ocoStopSymbols"></div>
         <input type="hidden" name="symbol" id="ocoStopSymbolInput" required />
 
-        <div class="action-container">
+        <!-- <div class="action-container">
             <button type="button" class="action-button buy" data-value="1">Buy</button>
             <button type="button" class="action-button sell" data-value="-1">Sell</button>
-        </div>
+        </div> -->
         <input type="hidden" name="quantity" id="ocoStopQuantityInput" required />
 
         <label>Stop Entry Price (OP):</label>
@@ -236,6 +236,7 @@
                     }
                 });
 
+                data.quantity = 1;
                 if (!data.symbol || !data.quantity) {
                     alert("Please select a symbol and side.");
                     return;

@@ -160,6 +160,9 @@ def load_contracts():
             parts = product_id.split(".")
             if len(parts) >= 3:
                 short_symbol = parts[-1]
+                if short_symbol == "ENQ": short_symbol = "NQ"
+                elif short_symbol == "EP": short_symbol = "ES"
+                elif short_symbol == "GCE": short_symbol = "GC"
                 contract_map[short_symbol] = {
                     "contractId": c["contractId"],
                     "tickValue": c["tickValue"],
@@ -176,7 +179,6 @@ def load_contracts():
         print("\n--- Contract Map ---")
         for k, v in contract_map.items():
             print(f"{k}: {v['contractId']}")
-
     except Exception as e:
         logging.error(f"UserContract load error: {e}")
 
@@ -255,7 +257,6 @@ async def place_oco_generic(data, entry_type):
     custom_tag = data.get("customTag")
 
     contract = contract_map.get(symbol)
-    print(symbol)
     if not contract:
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 400
 
