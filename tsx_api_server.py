@@ -177,8 +177,10 @@ def load_contracts():
 
         logging.info(f"Loaded {len(contract_map)} contracts")
         print("\n--- Contract Map ---")
+        print(contract_map)
         for k, v in contract_map.items():
             print(f"{k}: {v['contractId']}")
+        
     except Exception as e:
         logging.error(f"UserContract load error: {e}")
 
@@ -242,13 +244,21 @@ def get_account_info(token):
             logging.warning("No account data found.")
             return None
 
-        return accounts[0]  # Return the first account
+        for account in accounts:
+            if account.get("accountId") == ACCOUNT_ID:
+                return account
+
+        logging.warning(f"No account found with id: {ACCOUNT_ID}")
+        return None
     except Exception as e:
         logging.error(f"Account info fetch error: {e}")
         return None
 
 # --- Place OCO ---
 async def place_oco_generic(data, entry_type):
+    def round_to_tick(value, tick_size):
+        return round(value / tick_size) * tick_size
+
     quantity = int(data.get("quantity", 1))
     op = data.get("op")
     tp = data.get("tp")
@@ -264,11 +274,17 @@ async def place_oco_generic(data, entry_type):
     tick_value = contract["tickValue"]
     contract_id = contract["contractId"]
 
+    # Round prices to tick size
+    op = round_to_tick(op, tick_size)
+    tp = round_to_tick(tp, tick_size)
+    sl = round_to_tick(sl, tick_size)
+
     token = get_token()
     if not token:
         return jsonify({"error": "Authentication failed"}), 500
 
     account_info = get_account_info(token)
+    print(account_info)
     if not account_info:
         return jsonify({"error": "Failed to fetch account data"}), 500
 
@@ -287,7 +303,6 @@ async def place_oco_generic(data, entry_type):
     if quantity <= 0:
         return jsonify({"error": "Calculated quantity is zero"}), 400
 
-    # Micro to standard override
     micro_to_standard = {
         "MNQ": "NQ",
         "MYM": "YM",
@@ -305,7 +320,13 @@ async def place_oco_generic(data, entry_type):
         tick_value = contract["tickValue"]
         quantity = int(risk_budget / (sl_ticks * tick_value))
 
-    if quantity > 3: quantity = 3 #Maxium 3 contracts
+        # Re-round prices to new tick size
+        op = round_to_tick(op, tick_size)
+        tp = round_to_tick(tp, tick_size)
+        sl = round_to_tick(sl, tick_size)
+
+    if quantity > 3:
+        quantity = 3
 
     side = 0 if op < tp else 1
     size = abs(quantity)
@@ -345,6 +366,7 @@ async def place_oco_generic(data, entry_type):
     entry_id = entry.get("orderId")
     if not entry.get("success") or not entry_id:
         return jsonify({"error": "Entry order failed"}), 500
+
     await asyncio.sleep(0.3)
     tp_order = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
@@ -374,8 +396,8 @@ async def place_oco_generic(data, entry_type):
         "takeProfitOrderId": tp_order.get("orderId"),
         "stopLossOrderId": sl_order.get("orderId"),
         "contractId": contract_id,
-        "tickSize": contract["tickSize"],
-        "tickValue": contract["tickValue"],
+        "tickSize": tick_size,
+        "tickValue": tick_value,
         "balance": balance,
         "maximum_loss": maximum_loss,
         "risk_budget": risk_budget,
@@ -424,6 +446,13 @@ async def balance():
 async def startup():
     load_contracts()
     asyncio.create_task(monitor_oco_orders())
+    token = get_token()
+    if not token:
+        return jsonify({"error": "Authentication failed"}), 500
+
+    account_info = get_account_info(token)
+    if not account_info:
+        return jsonify({"error": "Failed to fetch account data"}), 500
 
 def run_server():
     app.run(host="0.0.0.0", port=5000)
