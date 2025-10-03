@@ -279,7 +279,7 @@ async def place_oco_generic(data, entry_type):
     tp = round_to_tick(tp, tick_size)
     sl = round_to_tick(sl, tick_size)
 
-    if op > sl: op += tick_size
+    if op > sl: op += tick_size * 2
 
     token = get_token()
     if not token:
@@ -301,7 +301,7 @@ async def place_oco_generic(data, entry_type):
 
     risk_budget = (balance - maximum_loss) * 0.24
     quantity = int(risk_budget / (sl_ticks * tick_value))
-    if quantity > 2 and tick_value >= 5 and risk_budget < 1500:
+    if quantity > 2 and tick_value >= 5 and risk_budget < 889:
         quantity = 2
     print(risk_budget)
     if quantity <= 0:
