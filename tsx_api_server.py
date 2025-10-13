@@ -8,6 +8,7 @@ from quart import Quart, render_template, request, jsonify
 from modules.discord import Alert
 import json
 import math
+import datetime
 
 # --- Suppress SSL warnings ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -241,24 +242,48 @@ def get_account_info(token):
     except Exception as e:
         logging.error(f"Account info fetch error: {e}")
         return None
+
+def search_order_by_id(token, account_id, order_id):
+    try:
+        now = datetime.datetime.utcnow()
+        start = (now - datetime.timedelta(minutes=5)).isoformat() + "+00:00"
+        end = (now + datetime.timedelta(minutes=1)).isoformat() + "+00:00"
+
+        res = requests.post(
+            f"{API_URL}/api/Order/search",
+            json={
+                "accountId": account_id,
+                "startTimestamp": start,
+                "endTimestamp": end
+            },
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            verify=False
+        )
+        res.raise_for_status()
+        orders = res.json().get("orders", [])
+        return next((o for o in orders if o.get("id") == order_id), None)
+    except Exception as e:
+        logging.error(f"Order search error: {e}")
+        return None
     
 async def wait_for_fill_and_place_tp(entry_id, contract_id, side, size, tp, token):
-    """
-    Waits until the entry order is filled (filledPrice not null), then places TP order.
-    """
     while True:
+        await asyncio.sleep(0.3)
+
+        # ✅ Check if entry is still tracked
+        if entry_id not in oco_orders:
+            logging.info(f"Entry {entry_id} no longer tracked. Skipping TP placement.")
+            return
+
         token, _ = get_token()
         if not token:
-            await asyncio.sleep(0.3)
             continue
-        await asyncio.sleep(0.3)
-        response = api_post(token, "/api/Order/searchOpen", {"accountId": ACCOUNT_ID})
-        orders = response.get("orders", [])
-        entry_order = next((o for o in orders if o.get("id") == entry_id), None)
 
+        entry_order = search_order_by_id(token, ACCOUNT_ID, entry_id)
         if not entry_order:
-            logging.warning(f"Entry order {entry_id} not found.")
-            continue
+            logging.warning(f"Entry order {entry_id} not found in search. Skipping TP.")
+            del oco_orders[entry_id]
+            return
 
         filled_price = entry_order.get("filledPrice")
         if filled_price is not None:
@@ -274,10 +299,9 @@ async def wait_for_fill_and_place_tp(entry_id, contract_id, side, size, tp, toke
                 "linkedOrderId": entry_id
             })
 
-            # Update oco_orders with TP ID
             if entry_id in oco_orders:
                 oco_orders[entry_id][0] = tp_order.get("orderId")
-            break
+            return
         else:
             logging.info(f"Entry {entry_id} not filled yet. Retrying...")
 
@@ -395,21 +419,6 @@ async def place_oco_generic(data, entry_type):
     #     "risk_budget": risk_budget,
     #     "message": "OCO placed"
     # })
-    # entry = api_post(token, "/api/Order/place", {
-    #     "accountId": ACCOUNT_ID,
-    #     "contractId": contract_id,
-    #     "type": entry_type,
-    #     "side": side,
-    #     "size": size,
-    #     "limitPrice": op if entry_type == 1 else None,
-    #     "stopPrice": op if entry_type == 4 else None
-    # })
-    ticks_sl = int(abs(op - sl) / tick_size)
-    ticks_tp = int(abs(tp - op) / tick_size)
-    if (side == 0): ticks_sl *= -1
-    else: ticks_tp *= -1
-
-    # https://gateway.docs.projectx.com/docs/api-reference/order/order-place
     entry = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
         "contractId": contract_id,
@@ -417,18 +426,33 @@ async def place_oco_generic(data, entry_type):
         "side": side,
         "size": size,
         "limitPrice": op if entry_type == 1 else None,
-        "stopPrice": op if entry_type == 4 else None,
-        "customTag": custom_tag,
-        "stopLossBracket": {
-            "ticks": ticks_sl,
-            "type": 4  # Stop
-        },
-        "takeProfitBracket": {
-            "ticks": ticks_tp,
-            "type": 1  # Limit
-        }
+        "stopPrice": op if entry_type == 4 else None
     })
-    print(entry)
+    # ticks_sl = int(abs(op - sl) / tick_size)
+    # ticks_tp = int(abs(tp - op) / tick_size)
+    # if (side == 0): ticks_sl *= -1
+    # else: ticks_tp *= -1
+
+    # # https://gateway.docs.projectx.com/docs/api-reference/order/order-place
+    # entry = api_post(token, "/api/Order/place", {
+    #     "accountId": ACCOUNT_ID,
+    #     "contractId": contract_id,
+    #     "type": entry_type,
+    #     "side": side,
+    #     "size": size,
+    #     "limitPrice": op if entry_type == 1 else None,
+    #     "stopPrice": op if entry_type == 4 else None,
+    #     "customTag": custom_tag,
+    #     "stopLossBracket": {
+    #         "ticks": ticks_sl,
+    #         "type": 4  # Stop
+    #     },
+    #     "takeProfitBracket": {
+    #         "ticks": ticks_tp,
+    #         "type": 1  # Limit
+    #     }
+    # })
+    # print(entry)
     entry_id = entry.get("orderId")
     if not entry.get("success") or not entry_id:
         return jsonify({"error": "Entry order failed"}), 500
@@ -443,29 +467,29 @@ async def place_oco_generic(data, entry_type):
     #     "limitPrice": tp,
     #     "linkedOrderId": entry_id
     # })
-    # await asyncio.sleep(0.3)
-    # sl_order = api_post(token, "/api/Order/place", {
-    #     "accountId": ACCOUNT_ID,
-    #     "contractId": contract_id,
-    #     "type": 4,
-    #     "side": 1 - side,
-    #     "size": size,
-    #     "stopPrice": sl,
-    #     "linkedOrderId": entry_id
-    # })
+    await asyncio.sleep(0.3)
+    sl_order = api_post(token, "/api/Order/place", {
+        "accountId": ACCOUNT_ID,
+        "contractId": contract_id,
+        "type": 4,
+        "side": 1 - side,
+        "size": size,
+        "stopPrice": sl,
+        "linkedOrderId": entry_id
+    })
     # print(sl_order)
 
-    # # Launch background task to wait for entry fill before placing TP
-    # asyncio.create_task(wait_for_fill_and_place_tp(
-    #     entry_id=entry_id,
-    #     contract_id=contract_id,
-    #     side=side,
-    #     size=size,
-    #     tp=tp,
-    #     token=token
-    # ))
+    # Launch background task to wait for entry fill before placing TP
+    asyncio.create_task(wait_for_fill_and_place_tp(
+        entry_id=entry_id,
+        contract_id=contract_id,
+        side=side,
+        size=size,
+        tp=tp,
+        token=token
+    ))
 
-    # oco_orders[entry_id] = [None, sl_order.get("orderId")]
+    oco_orders[entry_id] = [None, sl_order.get("orderId")]
 
     return jsonify({
         "entryOrderId": entry_id,

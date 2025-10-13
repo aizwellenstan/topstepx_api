@@ -38,7 +38,7 @@ api_key: "your_api_key"
 account_id: "123456"
 ```
 
-## Atuto OCO Bracket Setting
+## Atuto OCO Bracket Setting (if use auto oco part/ no need to change if listening)
 ![Alt text](doc/auto_oco_setting.png)
 
 ## 🚀 Quart API Server
