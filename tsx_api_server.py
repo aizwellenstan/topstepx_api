@@ -299,7 +299,7 @@ async def place_oco_generic(data, entry_type):
     if sl_ticks == 0:
         return jsonify({"error": "SL too close to OP"}), 400
 
-    risk_budget = (balance - maximum_loss) * 0.24
+    risk_budget = (balance - maximum_loss) * 0.3094 #0.24
     quantity = int(risk_budget / (sl_ticks * tick_value))
     if quantity > 2 and tick_value >= 5 and risk_budget < 889:
         quantity = 2
@@ -357,6 +357,21 @@ async def place_oco_generic(data, entry_type):
     #     "risk_budget": risk_budget,
     #     "message": "OCO placed"
     # })
+    # entry = api_post(token, "/api/Order/place", {
+    #     "accountId": ACCOUNT_ID,
+    #     "contractId": contract_id,
+    #     "type": entry_type,
+    #     "side": side,
+    #     "size": size,
+    #     "limitPrice": op if entry_type == 1 else None,
+    #     "stopPrice": op if entry_type == 4 else None
+    # })
+    ticks_sl = int(abs(op - sl) / tick_size)
+    ticks_tp = int(abs(tp - op) / tick_size)
+    if (side == 0): ticks_sl *= -1
+    else: ticks_tp *= -1
+
+    # https://gateway.docs.projectx.com/docs/api-reference/order/order-place
     entry = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
         "contractId": contract_id,
@@ -364,41 +379,50 @@ async def place_oco_generic(data, entry_type):
         "side": side,
         "size": size,
         "limitPrice": op if entry_type == 1 else None,
-        "stopPrice": op if entry_type == 4 else None
+        "stopPrice": op if entry_type == 4 else None,
+        "customTag": custom_tag,
+        "stopLossBracket": {
+            "ticks": ticks_sl,
+            "type": 4  # Stop
+        },
+        "takeProfitBracket": {
+            "ticks": ticks_tp,
+            "type": 1  # Limit
+        }
     })
     print(entry)
     entry_id = entry.get("orderId")
     if not entry.get("success") or not entry_id:
         return jsonify({"error": "Entry order failed"}), 500
 
-    await asyncio.sleep(0.3)
-    tp_order = api_post(token, "/api/Order/place", {
-        "accountId": ACCOUNT_ID,
-        "contractId": contract_id,
-        "type": 1,
-        "side": 1 - side,
-        "size": size,
-        "limitPrice": tp,
-        "linkedOrderId": entry_id
-    })
-    await asyncio.sleep(0.3)
-    sl_order = api_post(token, "/api/Order/place", {
-        "accountId": ACCOUNT_ID,
-        "contractId": contract_id,
-        "type": 4,
-        "side": 1 - side,
-        "size": size,
-        "stopPrice": sl,
-        "linkedOrderId": entry_id
-    })
-    print(sl_order)
+    # await asyncio.sleep(0.3)
+    # tp_order = api_post(token, "/api/Order/place", {
+    #     "accountId": ACCOUNT_ID,
+    #     "contractId": contract_id,
+    #     "type": 1,
+    #     "side": 1 - side,
+    #     "size": size,
+    #     "limitPrice": tp,
+    #     "linkedOrderId": entry_id
+    # })
+    # await asyncio.sleep(0.3)
+    # sl_order = api_post(token, "/api/Order/place", {
+    #     "accountId": ACCOUNT_ID,
+    #     "contractId": contract_id,
+    #     "type": 4,
+    #     "side": 1 - side,
+    #     "size": size,
+    #     "stopPrice": sl,
+    #     "linkedOrderId": entry_id
+    # })
+    # print(sl_order)
 
-    oco_orders[entry_id] = [tp_order.get("orderId"), sl_order.get("orderId")]
+    # oco_orders[entry_id] = [tp_order.get("orderId"), sl_order.get("orderId")]
 
     return jsonify({
         "entryOrderId": entry_id,
-        "takeProfitOrderId": tp_order.get("orderId"),
-        "stopLossOrderId": sl_order.get("orderId"),
+        # "takeProfitOrderId": tp_order.get("orderId"),
+        # "stopLossOrderId": sl_order.get("orderId"),
         "contractId": contract_id,
         "tickSize": tick_size,
         "tickValue": tick_value,
@@ -455,6 +479,7 @@ async def startup():
         return jsonify({"error": "Authentication failed"}), 500
 
     account_info = get_account_info(token)
+    print(account_info)
     if not account_info:
         return jsonify({"error": "Failed to fetch account data"}), 500
 
