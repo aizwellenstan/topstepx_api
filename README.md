@@ -38,6 +38,9 @@ api_key: "your_api_key"
 account_id: "123456"
 ```
 
+## Atuto OCO Bracket Setting
+![Alt text](doc/auto_oco_setting.png)
+
 ## 🚀 Quart API Server
 
 ```bash
