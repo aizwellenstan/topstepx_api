@@ -7,6 +7,7 @@ import urllib3
 from quart import Quart, render_template, request, jsonify
 from modules.discord import Alert
 import json
+import math
 
 # --- Suppress SSL warnings ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -45,19 +46,17 @@ contract_map = {}  # "MYM" → full contract metadata dict
 TOKEN = None
 def get_token(force_refresh=False):
     """
-    Return a valid token. 
-    If existing token fails account-info test, fetch a new one.
+    Return (token, account_info). Use cached token if account_info validates it.
     """
     global TOKEN
     if TOKEN and not force_refresh:
-        # test token by calling account info
-        if _test_token(TOKEN):
-            return TOKEN
+        account_info = get_account_info(TOKEN)
+        if account_info:
+            return TOKEN, account_info
         else:
-            logging.info("Stored token invalid, refreshing...")
-            TOKEN = None  # reset
+            logging.info("Cached token invalid, refreshing...")
+            TOKEN = None
 
-    # request new token
     try:
         res = requests.post(
             f"{API_URL}/api/Auth/loginKey",
@@ -68,33 +67,21 @@ def get_token(force_refresh=False):
         )
         res.raise_for_status()
         data = res.json()
-        TOKEN = data.get("token") if data.get("success") else None
-        return TOKEN
+        token = data.get("token") if data.get("success") else None
+
+        if token:
+            account_info = get_account_info(token)
+            if account_info:
+                TOKEN = token
+                return TOKEN, account_info
+            else:
+                logging.warning("New token failed validation.")
+                return None, None
+        else:
+            return None, None
     except Exception as e:
         logging.error(f"Auth error: {e}")
-        return None
-
-
-def _test_token(token):
-    """Try account info with given token. Return True if valid."""
-    try:
-        res = requests.get(
-            "https://userapi.topstepx.com/TradingAccount",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0",
-                "x-app-type": "px-desktop",
-                "x-app-version": "1.21.1"
-            },
-            timeout=10,
-            verify=False
-        )
-        if res.status_code == 200:
-            return True
-        return False
-    except Exception:
-        return False
+        return None, None
 
 # --- API POST ---
 def api_post(token, endpoint, payload):
@@ -128,7 +115,7 @@ def cancel_order(token, account_id, order_id):
 
 # --- Load Contracts ---
 def load_contracts():
-    token = get_token()
+    token, _ = get_token()
     if not token:
         logging.error("Contract preload failed: auth error")
         return
@@ -174,6 +161,7 @@ def load_contracts():
                     "decimalPlaces": c["decimalPlaces"],
                     "priceScale": c["priceScale"]
                 }
+        print(contract_map)
 
         logging.info(f"Loaded {len(contract_map)} contracts")
         print("\n--- Contract Map ---")
@@ -191,7 +179,7 @@ async def monitor_oco_orders():
             await asyncio.sleep(0.3)
             continue
 
-        token = get_token()
+        token, _ = get_token()
         if not token:
             await asyncio.sleep(0.3)
             continue
@@ -253,11 +241,66 @@ def get_account_info(token):
     except Exception as e:
         logging.error(f"Account info fetch error: {e}")
         return None
+    
+async def wait_for_fill_and_place_tp(entry_id, contract_id, side, size, tp, token):
+    """
+    Waits until the entry order is filled (filledPrice not null), then places TP order.
+    """
+    while True:
+        token, _ = get_token()
+        if not token:
+            await asyncio.sleep(0.3)
+            continue
+        await asyncio.sleep(0.3)
+        response = api_post(token, "/api/Order/searchOpen", {"accountId": ACCOUNT_ID})
+        orders = response.get("orders", [])
+        entry_order = next((o for o in orders if o.get("id") == entry_id), None)
+
+        if not entry_order:
+            logging.warning(f"Entry order {entry_id} not found.")
+            continue
+
+        filled_price = entry_order.get("filledPrice")
+        if filled_price is not None:
+            logging.info(f"Entry {entry_id} filled at {filled_price}. Placing TP...")
+
+            tp_order = api_post(token, "/api/Order/place", {
+                "accountId": ACCOUNT_ID,
+                "contractId": contract_id,
+                "type": 1,
+                "side": 1 - side,
+                "size": size,
+                "limitPrice": tp,
+                "linkedOrderId": entry_id
+            })
+
+            # Update oco_orders with TP ID
+            if entry_id in oco_orders:
+                oco_orders[entry_id][0] = tp_order.get("orderId")
+            break
+        else:
+            logging.info(f"Entry {entry_id} not filled yet. Retrying...")
 
 # --- Place OCO ---
 async def place_oco_generic(data, entry_type):
+    def get_precision(tick_size):
+        """
+        Returns the number of decimal places needed to represent tick_size cleanly.
+        Example:
+        0.1   → 1
+        0.25  → 2
+        0.01  → 2
+        0.0001 → 4
+        """
+        if tick_size == 0:
+            return 0
+        return max(0, -int(math.floor(math.log10(tick_size))))
+
     def round_to_tick(value, tick_size):
-        return round(value / tick_size) * tick_size
+        precision = get_precision(tick_size)
+        ticks = math.floor(value / tick_size)
+        floored = ticks * tick_size
+        return round(floored, precision)
 
     quantity = int(data.get("quantity", 1))
     op = data.get("op")
@@ -281,14 +324,9 @@ async def place_oco_generic(data, entry_type):
 
     if op > sl: op += tick_size * 2
 
-    token = get_token()
-    if not token:
+    token, account_info = get_token()
+    if not token or not account_info:
         return jsonify({"error": "Authentication failed"}), 500
-
-    account_info = get_account_info(token)
-    print(account_info)
-    if not account_info:
-        return jsonify({"error": "Failed to fetch account data"}), 500
 
     balance = account_info.get("balance")
     maximum_loss = account_info.get("maximumLoss")
@@ -417,7 +455,17 @@ async def place_oco_generic(data, entry_type):
     # })
     # print(sl_order)
 
-    # oco_orders[entry_id] = [tp_order.get("orderId"), sl_order.get("orderId")]
+    # # Launch background task to wait for entry fill before placing TP
+    # asyncio.create_task(wait_for_fill_and_place_tp(
+    #     entry_id=entry_id,
+    #     contract_id=contract_id,
+    #     side=side,
+    #     size=size,
+    #     tp=tp,
+    #     token=token
+    # ))
+
+    # oco_orders[entry_id] = [None, sl_order.get("orderId")]
 
     return jsonify({
         "entryOrderId": entry_id,
@@ -454,7 +502,7 @@ async def place_oco_stop():
 
 @app.route("/balance", methods=["GET"])
 async def balance():
-    token = get_token()
+    token, account_info = get_token()
     if not token:
         return jsonify({"error": "Authentication failed"}), 500
 
@@ -474,11 +522,9 @@ async def balance():
 async def startup():
     load_contracts()
     asyncio.create_task(monitor_oco_orders())
-    token = get_token()
+    token, account_info = get_token()
     if not token:
         return jsonify({"error": "Authentication failed"}), 500
-
-    account_info = get_account_info(token)
     print(account_info)
     if not account_info:
         return jsonify({"error": "Failed to fetch account data"}), 500
