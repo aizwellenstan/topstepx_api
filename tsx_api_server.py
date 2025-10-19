@@ -268,7 +268,7 @@ def search_order_by_id(token, account_id, order_id):
     
 async def wait_for_fill_and_place_tp(entry_id, contract_id, side, size, tp, token):
     while True:
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.4)
 
         # ✅ Check if entry is still tracked
         if entry_id not in oco_orders:
@@ -308,20 +308,12 @@ async def wait_for_fill_and_place_tp(entry_id, contract_id, side, size, tp, toke
 # --- Place OCO ---
 async def place_oco_generic(data, entry_type):
     def get_precision(tick_size):
-        """
-        Returns the number of decimal places needed to represent tick_size cleanly.
-        Example:
-        0.1   → 1
-        0.25  → 2
-        0.01  → 2
-        0.0001 → 4
-        """
         if tick_size == 0:
             return 0
         return max(0, -int(math.floor(math.log10(tick_size))))
 
     def round_to_tick(value, tick_size):
-        precision = get_precision(tick_size)
+        precision = get_precision(tick_size) + 1
         ticks = math.floor(value / tick_size)
         floored = ticks * tick_size
         return round(floored, precision)
@@ -333,41 +325,19 @@ async def place_oco_generic(data, entry_type):
     symbol = data.get("symbol", "").upper()
     custom_tag = data.get("customTag")
 
-    contract = contract_map.get(symbol)
-    if not contract:
-        return jsonify({"error": f"Unknown symbol: {symbol}"}), 400
-
-    tick_size = contract["tickSize"]
-    tick_value = contract["tickValue"]
-    contract_id = contract["contractId"]
-
-    # Round prices to tick size
-    op = round_to_tick(op, tick_size)
-    tp = round_to_tick(tp, tick_size)
-    sl = round_to_tick(sl, tick_size)
-
-    if op > sl: op += tick_size * 2
-
     token, account_info = get_token()
-    if not token or not account_info:
-        return jsonify({"error": "Authentication failed"}), 500
+    # if not token or not account_info:
+    #     return jsonify({"error": "Authentication failed"}), 500
 
     balance = account_info.get("balance")
     maximum_loss = account_info.get("maximumLoss")
-    if balance is None or maximum_loss is None:
-        return jsonify({"error": "Missing account data"}), 500
+    # if balance is None or maximum_loss is None:
+    #     return jsonify({"error": "Missing account data"}), 500
 
-    sl_ticks = abs(op - sl) / tick_size
-    if sl_ticks == 0:
-        return jsonify({"error": "SL too close to OP"}), 400
-
-    risk_budget = (balance - maximum_loss) * 0.3094 #0.24
-    quantity = int(risk_budget / (sl_ticks * tick_value))
-    if quantity > 2 and tick_value >= 5 and risk_budget < 889:
-        quantity = 2
-    print(risk_budget)
-    if quantity <= 0:
-        return jsonify({"error": "Calculated quantity is zero"}), 400
+    # Sizing based on backtested result
+    # https://github.com/aizwellenstan/portfolio_backtest_sizing/blob/main/expectancy.py
+    risk_pct = 0.046
+    min_risk = 253
 
     micro_to_standard = {
         "MNQ": "NQ",
@@ -375,24 +345,51 @@ async def place_oco_generic(data, entry_type):
         "MGC": "GC",
         "MES": "ES"
     }
+    standard_to_micro = {v: k for k, v in micro_to_standard.items()}
+    micro_symbol = standard_to_micro.get(symbol, symbol)
+    micro_contract = contract_map.get(micro_symbol)
+    # if not micro_contract:
+    #     return jsonify({"error": f"Micro contract not found: {micro_symbol}"}), 400
 
-    if quantity >= 10 and symbol in micro_to_standard:
-        symbol = micro_to_standard[symbol]
+    tick_size = micro_contract["tickSize"]
+    tick_value = micro_contract["tickValue"]
+    contract_id = micro_contract["contractId"]
+
+    op = round_to_tick(op, tick_size)
+    tp = round_to_tick(tp, tick_size)
+    sl = round_to_tick(sl, tick_size)
+
+    if op > sl: op += tick_size * 4
+    else: op -= tick_size
+
+    sl_ticks = abs(op - sl) / tick_size
+    # if sl_ticks == 0:
+    #     return jsonify({"error": "SL too close to OP"}), 400
+
+    risk_budget = (balance - maximum_loss) * risk_pct
+    dynamic_contracts = math.floor(risk_budget / (sl_ticks * tick_value))
+    min_contracts = math.ceil(min_risk / (sl_ticks * tick_value))
+    quantity = max(dynamic_contracts, min_contracts)
+
+    if quantity >= 10 and micro_symbol in micro_to_standard:
+        symbol = micro_to_standard[micro_symbol]
         contract = contract_map.get(symbol)
-        if not contract:
-            return jsonify({"error": f"Standard symbol not found: {symbol}"}), 400
+        # if not contract:
+        #     return jsonify({"error": f"Standard symbol not found: {symbol}"}), 400
         contract_id = contract["contractId"]
         tick_size = contract["tickSize"]
         tick_value = contract["tickValue"]
         quantity = int(risk_budget / (sl_ticks * tick_value))
 
-        # Re-round prices to new tick size
         op = round_to_tick(op, tick_size)
         tp = round_to_tick(tp, tick_size)
         sl = round_to_tick(sl, tick_size)
 
     if quantity > 3:
         quantity = 3
+
+    # if quantity <= 0:
+    #     return jsonify({"error": "Calculated quantity is zero"}), 400
 
     side = 0 if op < tp else 1
     size = abs(quantity)
@@ -408,8 +405,7 @@ async def place_oco_generic(data, entry_type):
         "risk_budget": risk_budget,
         "message": "OCO placed"
     }
-    print(message)
-    Alert(json.dumps(message))
+    # print(message)
     # return jsonify({
     #     "contract": contract_id,
     #     "side": side,
@@ -419,6 +415,8 @@ async def place_oco_generic(data, entry_type):
     #     "risk_budget": risk_budget,
     #     "message": "OCO placed"
     # })
+    
+
     entry = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
         "contractId": contract_id,
@@ -428,45 +426,11 @@ async def place_oco_generic(data, entry_type):
         "limitPrice": op if entry_type == 1 else None,
         "stopPrice": op if entry_type == 4 else None
     })
-    # ticks_sl = int(abs(op - sl) / tick_size)
-    # ticks_tp = int(abs(tp - op) / tick_size)
-    # if (side == 0): ticks_sl *= -1
-    # else: ticks_tp *= -1
 
-    # # https://gateway.docs.projectx.com/docs/api-reference/order/order-place
-    # entry = api_post(token, "/api/Order/place", {
-    #     "accountId": ACCOUNT_ID,
-    #     "contractId": contract_id,
-    #     "type": entry_type,
-    #     "side": side,
-    #     "size": size,
-    #     "limitPrice": op if entry_type == 1 else None,
-    #     "stopPrice": op if entry_type == 4 else None,
-    #     "customTag": custom_tag,
-    #     "stopLossBracket": {
-    #         "ticks": ticks_sl,
-    #         "type": 4  # Stop
-    #     },
-    #     "takeProfitBracket": {
-    #         "ticks": ticks_tp,
-    #         "type": 1  # Limit
-    #     }
-    # })
-    # print(entry)
     entry_id = entry.get("orderId")
-    if not entry.get("success") or not entry_id:
-        return jsonify({"error": "Entry order failed"}), 500
+    # if not entry.get("success") or not entry_id:
+    #     return jsonify({"error": "Entry order failed"}), 500
 
-    # await asyncio.sleep(0.3)
-    # tp_order = api_post(token, "/api/Order/place", {
-    #     "accountId": ACCOUNT_ID,
-    #     "contractId": contract_id,
-    #     "type": 1,
-    #     "side": 1 - side,
-    #     "size": size,
-    #     "limitPrice": tp,
-    #     "linkedOrderId": entry_id
-    # })
     await asyncio.sleep(0.3)
     sl_order = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
@@ -477,9 +441,7 @@ async def place_oco_generic(data, entry_type):
         "stopPrice": sl,
         "linkedOrderId": entry_id
     })
-    # print(sl_order)
 
-    # Launch background task to wait for entry fill before placing TP
     asyncio.create_task(wait_for_fill_and_place_tp(
         entry_id=entry_id,
         contract_id=contract_id,
@@ -491,10 +453,10 @@ async def place_oco_generic(data, entry_type):
 
     oco_orders[entry_id] = [None, sl_order.get("orderId")]
 
+    print(message)  
+    Alert(json.dumps(message))
     return jsonify({
         "entryOrderId": entry_id,
-        # "takeProfitOrderId": tp_order.get("orderId"),
-        # "stopLossOrderId": sl_order.get("orderId"),
         "contractId": contract_id,
         "tickSize": tick_size,
         "tickValue": tick_value,
@@ -503,6 +465,7 @@ async def place_oco_generic(data, entry_type):
         "risk_budget": risk_budget,
         "message": "OCO placed"
     })
+
 
 @app.route("/")
 async def index():
