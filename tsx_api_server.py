@@ -359,7 +359,7 @@ async def place_oco_generic(data, entry_type):
     tp = round_to_tick(tp, tick_size)
     sl = round_to_tick(sl, tick_size)
 
-    if op > sl: op += tick_size * 4
+    if op > sl: op += tick_size * 5
     else: op -= tick_size
 
     sl_ticks = abs(op - sl) / tick_size
@@ -405,6 +405,7 @@ async def place_oco_generic(data, entry_type):
         "risk_budget": risk_budget,
         "message": "OCO placed"
     }
+    # Alert(json.dumps(message))
     # print(message)
     # return jsonify({
     #     "contract": contract_id,
@@ -415,7 +416,6 @@ async def place_oco_generic(data, entry_type):
     #     "risk_budget": risk_budget,
     #     "message": "OCO placed"
     # })
-    
 
     entry = api_post(token, "/api/Order/place", {
         "accountId": ACCOUNT_ID,
