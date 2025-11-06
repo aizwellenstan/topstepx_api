@@ -359,7 +359,7 @@ async def place_oco_generic(data, entry_type):
     tp = round_to_tick(tp, tick_size)
     sl = round_to_tick(sl, tick_size)
 
-    if op > sl: op += tick_size * 9
+    if op > sl: op += tick_size * 10
     else: op -= tick_size
 
     sl_ticks = abs(op - sl) / tick_size
