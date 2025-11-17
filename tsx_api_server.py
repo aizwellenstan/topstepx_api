@@ -151,6 +151,8 @@ def load_contracts():
                 if short_symbol == "ENQ": short_symbol = "NQ"
                 elif short_symbol == "EP": short_symbol = "ES"
                 elif short_symbol == "GCE": short_symbol = "GC"
+                elif short_symbol == "SIE": short_symbol = "SI"
+                elif short_symbol == "CPE": short_symbol = "HG"
                 contract_map[short_symbol] = {
                     "contractId": c["contractId"],
                     "tickValue": c["tickValue"],
@@ -343,7 +345,9 @@ async def place_oco_generic(data, entry_type):
         "MNQ": "NQ",
         "MYM": "YM",
         "MGC": "GC",
-        "MES": "ES"
+        "MES": "ES",
+        "SIL": "SI",
+        "MHG": "HG"
     }
     standard_to_micro = {v: k for k, v in micro_to_standard.items()}
     micro_symbol = standard_to_micro.get(symbol, symbol)
@@ -367,9 +371,13 @@ async def place_oco_generic(data, entry_type):
     #     return jsonify({"error": "SL too close to OP"}), 400
 
     risk_budget = (balance - maximum_loss) * risk_pct
+    if custom_tag == "AllTimeLongES":
+        risk_budget = (balance - maximum_loss) - 64
     dynamic_contracts = math.floor(risk_budget / (sl_ticks * tick_value))
-    min_contracts = math.ceil(min_risk / (sl_ticks * tick_value))
-    quantity = max(dynamic_contracts, min_contracts)
+    # min_contracts = math.ceil(min_risk / (sl_ticks * tick_value))
+    # quantity = max(dynamic_contracts, min_contracts)
+    quantity = dynamic_contracts
+    if quantity < 1: quantity = 1
 
     if quantity >= 10 and micro_symbol in micro_to_standard:
         symbol = micro_to_standard[micro_symbol]
