@@ -153,6 +153,7 @@ def load_contracts():
                 elif short_symbol == "GCE": short_symbol = "GC"
                 elif short_symbol == "SIE": short_symbol = "SI"
                 elif short_symbol == "CPE": short_symbol = "HG"
+                elif short_symbol == "GLE": short_symbol = "LE"
                 contract_map[short_symbol] = {
                     "contractId": c["contractId"],
                     "tickValue": c["tickValue"],
@@ -164,7 +165,6 @@ def load_contracts():
                     "decimalPlaces": c["decimalPlaces"],
                     "priceScale": c["priceScale"]
                 }
-        print(contract_map)
 
         logging.info(f"Loaded {len(contract_map)} contracts")
         print("\n--- Contract Map ---")
