@@ -154,6 +154,7 @@ def load_contracts():
                 elif short_symbol == "SIE": short_symbol = "SI"
                 elif short_symbol == "CPE": short_symbol = "HG"
                 elif short_symbol == "GLE": short_symbol = "LE"
+                elif short_symbol == "EU6": short_symbol = "6E"
                 contract_map[short_symbol] = {
                     "contractId": c["contractId"],
                     "tickValue": c["tickValue"],
@@ -347,7 +348,8 @@ async def place_oco_generic(data, entry_type):
         "MGC": "GC",
         "MES": "ES",
         "SIL": "SI",
-        "MHG": "HG"
+        "MHG": "HG",
+        "M6E": "6E"
     }
     standard_to_micro = {v: k for k, v in micro_to_standard.items()}
     micro_symbol = standard_to_micro.get(symbol, symbol)
