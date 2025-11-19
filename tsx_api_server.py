@@ -148,13 +148,17 @@ def load_contracts():
             parts = product_id.split(".")
             if len(parts) >= 3:
                 short_symbol = parts[-1]
-                if short_symbol == "ENQ": short_symbol = "NQ"
-                elif short_symbol == "EP": short_symbol = "ES"
-                elif short_symbol == "GCE": short_symbol = "GC"
-                elif short_symbol == "SIE": short_symbol = "SI"
-                elif short_symbol == "CPE": short_symbol = "HG"
-                elif short_symbol == "GLE": short_symbol = "LE"
-                elif short_symbol == "EU6": short_symbol = "6E"
+                short_symbol_map = {
+                    "ENQ": "NQ",
+                    "EP": "ES",
+                    "GCE": "GC",
+                    "SIE": "SI",
+                    "CPE": "HG",
+                    "GLE": "LE",
+                    "EU6": "6E"
+                }
+                if short_symbol in short_symbol_map:
+                    short_symbol = short_symbol_map[short_symbol]
                 contract_map[short_symbol] = {
                     "contractId": c["contractId"],
                     "tickValue": c["tickValue"],
