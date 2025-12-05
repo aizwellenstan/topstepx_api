@@ -155,7 +155,8 @@ def load_contracts():
                     "SIE": "SI",
                     "CPE": "HG",
                     "GLE": "LE",
-                    "EU6": "6E"
+                    "EU6": "6E",
+                    "PLE": "PL"
                 }
                 if short_symbol in short_symbol_map:
                     short_symbol = short_symbol_map[short_symbol]
