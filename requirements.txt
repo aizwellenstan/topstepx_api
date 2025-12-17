@@ -1,4 +1,4 @@
-quart
-requests
+httpx
+fastapi
+uvicorn
 pyyaml
-quart_cors

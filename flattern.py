@@ -83,33 +83,33 @@ def get_positions(token, account_id):
         return []
 
 # --- Commented Close Logic ---
-# def close_contract_position(token, account_id, contract_id):
-#     try:
-#         payload = {
-#             "accountId": account_id,
-#             "contractId": contract_id
-#         }
-#         res = requests.post(
-#             f"{API_URL}/api/Position/closeContract",
-#             json=payload,
-#             headers={
-#                 "Authorization": f"Bearer {token}",
-#                 "Content-Type": "application/json"
-#             },
-#             timeout=10,
-#             verify=False
-#         )
-#         res.raise_for_status()
-#         data = res.json()
-#         if data.get("success"):
-#             logging.info(f"✅ Closed contract {contract_id} for account {account_id}")
-#             return True
-#         else:
-#             logging.warning(f"❌ Close failed for {contract_id}: {data}")
-#             return False
-#     except Exception as e:
-#         logging.error(f"Error closing contract {contract_id}: {e}")
-#         return False
+def close_contract_position(token, account_id, contract_id):
+    try:
+        payload = {
+            "accountId": account_id,
+            "contractId": contract_id
+        }
+        res = requests.post(
+            f"{API_URL}/api/Position/closeContract",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            timeout=10,
+            verify=False
+        )
+        res.raise_for_status()
+        data = res.json()
+        if data.get("success"):
+            logging.info(f"✅ Closed contract {contract_id} for account {account_id}")
+            return True
+        else:
+            logging.warning(f"❌ Close failed for {contract_id}: {data}")
+            return False
+    except Exception as e:
+        logging.error(f"Error closing contract {contract_id}: {e}")
+        return False
 
 def search_trades(token, account_id, start_time_iso, end_time_iso=None):
     try:
@@ -188,12 +188,12 @@ def main():
                 logging.info(f"  Position ID: {pos['id']}, Contract: {contract_id}, Size: {pos['size']}, Avg Price: {pos['averagePrice']}")
 
                 # --- Commented Close Logic ---
-                # success = close_contract_position(token, account_id, contract_id)
-                # time.sleep(0.3)
+                success = close_contract_position(token, account_id, contract_id)
+                time.sleep(0.3)
 
-                # --- Trade Search ---
-                now = datetime.now(timezone.utc)
-                start_time = (now - timedelta(hours=24)).isoformat()
+                # # --- Trade Search ---
+                # now = datetime.now(timezone.utc)
+                # start_time = (now - timedelta(hours=24)).isoformat()
                 # trades = search_trades(token, account_id, start_time)
                 # time.sleep(0.3)
 
