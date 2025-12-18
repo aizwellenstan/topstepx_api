@@ -2,3 +2,5 @@ httpx
 fastapi
 uvicorn
 pyyaml
+uvloop
+httptools
