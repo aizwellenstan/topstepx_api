@@ -24,7 +24,7 @@ with open("config.yaml") as f:
 API_URL = "https://api.topstepx.com"
 USERNAME = config["username"]
 API_KEY = config["api_key"]
-ACCOUNT_ID = int(config["account_id"])
+ACCOUNT_ID = int(config["express_account_id"])
 
 TOKEN = None
 pending_entries = {}  # entry_id: sl_order_id (Only tracked while Entry is active/unfilled)
@@ -201,19 +201,8 @@ async def index(request: Request):
 # Add this near the top with other globals
 oco_orders = {}  # entry_id: [tp_order_id, sl_order_id]
 
-SECOND_SERVER_URL = "http://localhost:5001/place-oco"
 @app.post("/place-oco")
 async def place_oco(data: OCORequest):
-    # --- Relay in background (non-blocking) ---
-    async def forward_request(payload):
-        async with httpx.AsyncClient() as client:
-            try:
-                await client.post(SECOND_SERVER_URL, json=payload)
-            except Exception as e:
-                logging.error(f"Relay failed: {e}")
-
-    asyncio.create_task(forward_request(data.dict()))
-    
     def get_precision(tick_size):
         return max(0, -int(math.floor(math.log10(tick_size)))) if tick_size > 0 else 0
 
@@ -240,7 +229,7 @@ async def place_oco(data: OCORequest):
         raise HTTPException(500, "Missing account data")
 
     # --- Risk sizing ---
-    risk_pct = 0.046
+    risk_pct = 0.01
     micro_to_standard = {
         "MNQ": "NQ", "MYM": "YM", "MGC": "GC", "MES": "ES",
         "SIL": "SI", "MHG": "HG", "M6E": "6E"
@@ -269,8 +258,9 @@ async def place_oco(data: OCORequest):
         raise HTTPException(400, "SL too close to OP")
 
     risk_budget = (balance - maximum_loss) * risk_pct
-    if custom_tag == "AllTimeLongES":
-        risk_budget = (balance - maximum_loss) - 64
+    # if custom_tag == "AllTimeLongES":
+    #     return
+    #     # risk_budget = (balance - maximum_loss) - 64
 
     dynamic_contracts = math.floor(risk_budget / (sl_ticks * tick_value))
     quantity = max(dynamic_contracts, 1)
