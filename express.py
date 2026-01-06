@@ -27,8 +27,8 @@ API_KEY = config["api_key"]
 ACCOUNT_ID = int(config["express_account_id"])
 
 TOKEN = None
-pending_entries = {}  # entry_id: sl_order_id (Only tracked while Entry is active/unfilled)
 contract_map = {}
+oco_orders = {}  # entry_id: [tp_order_id, sl_order_id]
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 templates = Jinja2Templates(directory="templates")
 # --- Global HTTPX Client (reused) ---
@@ -79,16 +79,14 @@ async def get_token():
 
 # --- Main Logic ---
 
-async def monitor_entry_and_place_tp(entry_id, contract_id, side, size, tp, sl_id):
+async def monitor_entry_and_place_tp(entry_id, contract_id, side, size, tp):
     """
     Handles the lifecycle of the order set:
     1. If Entry is CANCELED manually -> Cancel the SL and stop.
     2. If Entry is FILLED -> Place the TP and stop (SL stays alive).
     """
-    pending_entries[entry_id] = sl_id
-    
     while True:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
         token, _ = await get_token()
         if not token: continue
 
@@ -102,32 +100,41 @@ async def monitor_entry_and_place_tp(entry_id, contract_id, side, size, tp, sl_i
         if not order_data:
             continue
 
-        # --- CASE A: Entry Filled ---
         if order_data.get("filledPrice") is not None:
-            logging.info(f"Entry {entry_id} filled. Placing TP. Leaving SL {sl_id} alone.")
-            
-            # Place TP
-            await api_call("POST", "/api/Order/place", {
-                "accountId": ACCOUNT_ID, "contractId": contract_id,
-                "type": 1, "side": 1 - side, "size": size,
-                "limitPrice": tp, "linkedOrderId": entry_id
-            }, token=token)
-            
-            # REMOVE from protection list so monitor stops
-            pending_entries.pop(entry_id, None)
-            return # EXIT TASK: Script will no longer touch this trade
+            if oco_orders[entry_id][0] is None:
+                # Place TP
+                tp_order = await api_call("POST", "/api/Order/place", {
+                    "accountId": ACCOUNT_ID, "contractId": contract_id,
+                    "type": 1, "side": 1 - side, "size": size,
+                    "limitPrice": tp, "linkedOrderId": entry_id
+                }, token=token)
+                oco_orders[entry_id][0] = tp_order.get("orderId")
+                logging.info(f"Entry {entry_id} filled. Placed TP {oco_orders[entry_id][0]}")
+        
+            else:
+                oco_order = oco_orders[entry_id]
+                tp_id = oco_order[0]
+                sl_id = oco_order[1]
+                tp_order_data = next((o for o in res.get("orders", []) if o.get("id") == tp_id), None)
+                sl_order_data = next((o for o in res.get("orders", []) if o.get("id") == sl_id), None)
+                
+                if tp_order_data.get("filledPrice") is not None:
+                    await api_call("POST", "/api/Order/cancel", {
+                        "accountId": ACCOUNT_ID, "orderId": sl_id
+                    }, token=token)
+                    logging.info(f"TP {tp_id} FILLED CANCEL SL {sl_id}")
+                    oco_orders.pop(entry_id, None)
+                    return
+                elif sl_order_data.get("filledPrice") is not None:
+                    await api_call("POST", "/api/Order/cancel", {
+                        "accountId": ACCOUNT_ID, "orderId": tp_id
+                    }, token=token)
+                    logging.info(f"SL {sl_id} FILLED CANCEL TP {tp_id}")
+                    oco_orders.pop(entry_id, None)
+                    return
 
-        # --- CASE B: Entry Canceled/Rejected ---
-        status = order_data.get("status")
-        if status in [2, 3]: # 2=Canceled, 3=Rejected
-            logging.info(f"Entry {entry_id} was manually canceled or rejected. Killing SL {sl_id}")
-            
-            await api_call("POST", "/api/Order/cancel", {
-                "accountId": ACCOUNT_ID, "orderId": sl_id
-            }, token=token)
-            
-            pending_entries.pop(entry_id, None)
-            return # EXIT TASK
+                status = order_data.get("status")
+                logging.info(f"Entry {entry_id} SL {sl_id} ENTRY_STATUS {status}")
 
 # --- Async Contract Loader ---
 async def load_contracts(token: str):
@@ -197,9 +204,6 @@ async def index(request: Request):
     priority = ["YM", "MYM", "NQ", "MNQ", "GC", "MGC", "ES", "MES"]
     sorted_symbols = priority + [s for s in contract_map.keys() if s not in priority]
     return templates.TemplateResponse("order_form.html", {"request": request, "symbols": sorted_symbols})
-
-# Add this near the top with other globals
-oco_orders = {}  # entry_id: [tp_order_id, sl_order_id]
 
 @app.post("/place-oco")
 async def place_oco(data: OCORequest):
@@ -329,17 +333,15 @@ async def place_oco(data: OCORequest):
     if not sl_id:
         raise HTTPException(500, "SL order failed")
 
+    oco_orders[entry_id] = [None, sl_order.get("orderId")]
     # --- Lifecycle monitor for TP ---
     asyncio.create_task(monitor_entry_and_place_tp(
         entry_id=entry_id,
         contract_id=contract_id,
         side=side,
         size=size,
-        tp=tp,
-        sl_id=sl_id
+        tp=tp
     ))
-
-    oco_orders[entry_id] = [None, sl_id]
 
     return {
         "entryOrderId": entry_id,
