@@ -36,6 +36,7 @@ class TradingServer:
         self.username = config["username"]
         self.api_key = config["api_key"]
         self.account_id = int(config["account_id"])
+        self.risk_pct = float(config["risk_pct"])
         self.relay_urls = relay_urls or []
 
         self.token = None
@@ -288,7 +289,6 @@ class TradingServer:
                 raise HTTPException(500, "Missing account data")
 
             # --- Risk sizing ---
-            risk_pct = 0.046
             micro_to_standard = {
                 "MNQ": "NQ", "MYM": "YM", "MGC": "GC", "MES": "ES",
                 "SIL": "SI", "MHG": "HG", "M6E": "6E"
@@ -316,8 +316,8 @@ class TradingServer:
             if sl_ticks == 0:
                 raise HTTPException(400, "SL too close to OP")
 
-            risk_budget = (balance - maximum_loss) * risk_pct
-            if custom_tag == "AllTimeLongES":
+            risk_budget = (balance - maximum_loss) * self.risk_pct
+            if self.risk_pct > 0.049 and custom_tag == "AllTimeLongES":
                 risk_budget = (balance - maximum_loss) - 64
 
             dynamic_contracts = math.floor(risk_budget / (sl_ticks * tick_value))
