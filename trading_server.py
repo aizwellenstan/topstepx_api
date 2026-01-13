@@ -121,7 +121,7 @@ class TradingServer:
         2. If Entry is FILLED -> Place the TP and stop (SL stays alive).
         """
         while True:
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(3)
             token = await self.get_token()
             if not token: continue
 
@@ -131,7 +131,7 @@ class TradingServer:
             res = await self.api_call("POST", "/api/Order/search", {"accountId": self.account_id, "startTimestamp": start}, token=token)
             
             order_data = next((o for o in res.get("orders", []) if o.get("id") == entry_id), None)
-            
+            if order_data is None: continue
             oco_order = self.oco_orders[entry_id]
             sl_id = oco_order[1]
             if order_data.get("filledPrice") is not None:
