@@ -253,15 +253,22 @@ class TradingServer:
         @self.app.post("/place-oco")
         async def place_oco(data: OCORequest):
             # relay if configured
+            async def forward_request(relay_urls, payload):
+                async with httpx.AsyncClient() as client:
+                    tasks = []
+                    for url in relay_urls:
+                        tasks.append(post_with_logging(client, url, payload))
+                    await asyncio.gather(*tasks)
+
+            async def post_with_logging(client, url, payload):
+                try:
+                    await client.post(url, json=payload)
+                except Exception as e:
+                    logging.error(f"Relay failed to {url}: {e}")
+
+            # Usage
             if self.relay_urls:
-                async def forward_request(payload):
-                    async with httpx.AsyncClient() as client:
-                        for url in self.relay_urls:
-                            try:
-                                await client.post(url, json=payload)
-                            except Exception as e:
-                                logging.error(f"Relay failed to {url}: {e}")
-                asyncio.create_task(forward_request(data.dict()))
+                asyncio.create_task(forward_request(self.relay_urls, data.dict()))
 
             def get_precision(tick_size):
                 return max(0, -int(math.floor(math.log10(tick_size)))) if tick_size > 0 else 0
