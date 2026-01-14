@@ -10,7 +10,11 @@ def run_task():
 
 def run_relay():
     # Example: run a batch file or another Python script
+    bat_file = r"C:\Users\Administrator\workspace\topstepx_api\run.bat"
+    subprocess.run(bat_file, shell=True, check=True)
     bat_file = r"C:\Users\Administrator\workspace\topstepx_api\run_relay.bat"
+    subprocess.run(bat_file, shell=True, check=True)
+    bat_file = r"C:\Users\Administrator\workspace\topstepx_api\run_relay2.bat"
     subprocess.run(bat_file, shell=True, check=True)
     print("Task executed at 18:00.")
 
