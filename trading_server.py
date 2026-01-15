@@ -316,6 +316,7 @@ class TradingServer:
 
             if op > sl:
                 op += tick_size * 11
+                if op >= tp: op = tp - tick_size * 3
             else:
                 op -= tick_size
 
