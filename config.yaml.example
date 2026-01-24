@@ -1,3 +1,4 @@
-username: "@mail.com"
+username: "@gmail.com"
 api_key: ""
-account_id: "12345678"
+account_id: ""
+risk_pct: 0.05
