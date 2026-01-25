@@ -325,8 +325,11 @@ class TradingServer:
                 raise HTTPException(400, "SL too close to OP")
 
             risk_budget = (balance - maximum_loss) * self.risk_pct
-            if self.risk_pct > 0.049 and custom_tag == "AllTimeLongES":
-                risk_budget = (balance - maximum_loss) - 64
+            if self.risk_pct > 0.055:
+                if custom_tag in [
+                    "AllTimeLongES"
+                ]:
+                    risk_budget = (balance - maximum_loss) - 97
 
             dynamic_contracts = math.floor(risk_budget / (sl_ticks * tick_value))
             quantity = max(dynamic_contracts, 1)
