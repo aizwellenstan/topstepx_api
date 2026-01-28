@@ -366,7 +366,9 @@ class TradingServer:
                 "message": "OCO placed"
             }
             logging.info(message)
-            Alert(json.dumps(message))
+            try:
+                Alert(json.dumps(message))
+            except: pass
 
             # --- Place entry order ---
             entry = await self.api_call("POST", "/api/Order/place", {
