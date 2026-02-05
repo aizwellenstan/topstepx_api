@@ -315,8 +315,8 @@ class TradingServer:
             sl = round_to_tick(sl, tick_size)
 
             if op > sl:
-                op += tick_size * 11
-                if op >= tp: op = tp - tick_size * 3
+                op += tick_size * 12
+                if op >= tp: op = tp - tick_size * 4
             else:
                 op -= tick_size
 
